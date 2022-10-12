@@ -13,6 +13,7 @@ error SimpleDemocracy__StatusMustBePeaceful();
 error SimpleDemocracy__AlreadyJoinedUprising();
 error SimpleDemocracy__NewCitizensCantBeLeader();
 error SimpleDemocracy__AlreadyVoted();
+error SimpleDemocracy__UpkeepNotNeeded();
 
 contract SimpleDemocracy is AutomationCompatible {
    enum Status {
@@ -25,7 +26,7 @@ contract SimpleDemocracy is AutomationCompatible {
       address addr;
       uint256 favoriteNumber;
       uint256 citizenId;
-      uint256 weeksAsCitizen;
+      uint256 timeAsCitizen;
       bool isMale;
    }
 
@@ -33,7 +34,7 @@ contract SimpleDemocracy is AutomationCompatible {
       address addr;
       uint256 favoriteNumber;
       uint256 leaderId;
-      uint256 weeksAsLeader;
+      uint256 timeAsLeader;
       bool isMale;
    }
 
@@ -43,18 +44,19 @@ contract SimpleDemocracy is AutomationCompatible {
       uint256 votes;
    }
 
+   uint256 startingTimestamp;
+   uint256 timeInterval = 60 * 60 * 24 * 7;
    uint256 rebelCounter;
    Status public status;
    Citizen[] public citizenArray;
    Leader[] public leaderArray;
-   
    mapping(address => bool) public isCitizen;
    mapping(address => Citizen) public citizenMapping;
    // user address to leaderId to bool representing if the user has called startRevolution()
-   mapping(address => mapping(uint => bool)) public isRebel;
+   mapping(address => mapping(uint256 => bool)) public isRebel;
    mapping(address => bool) public isLeader;
    // user address to leaderId to bool representing if the user has voted for a campaign
-   mapping(address => mapping(uint => bool)) public hasVoted;
+   mapping(address => mapping(uint256 => bool)) public hasVoted;
    mapping(uint256 => Campaign[]) public leaderIdToCampaignArray;
    /// @dev this uint[] is used with VRF to pick a winner if there is a tie
    mapping(uint256 => uint256[]) public winnerCampaignIds;
@@ -66,12 +68,11 @@ contract SimpleDemocracy is AutomationCompatible {
    );
    event LeaderOverthrown(
       address indexed leader,
-      uint256 indexed weeksAsLeader
+      uint256 indexed timeAsLeader
    );
-   //event upkeepNotNeeded(address indexed currentLeader, uint indexed termLength);
    event CivilizationAtPeace(
       address indexed currentLeader,
-      uint256 indexed weeksAsLeader
+      uint256 indexed timeAsLeader
    );
    event NewLeaderElected(address indexed newLeader, uint256 numberOfVotes);
    event VRFChoosingNewLeader(uint256 numberOfWinningCampaigns);
@@ -90,7 +91,7 @@ contract SimpleDemocracy is AutomationCompatible {
             addr: msg.sender,
             favoriteNumber: favoriteNumber,
             citizenId: citizenArray.length,
-            weeksAsCitizen: 0,
+            timeAsCitizen: 0,
             isMale: isMale
          })
       );
@@ -100,11 +101,12 @@ contract SimpleDemocracy is AutomationCompatible {
             addr: msg.sender,
             favoriteNumber: favoriteNumber,
             leaderId: leaderArray.length,
-            weeksAsLeader: 0,
+            timeAsLeader: 0,
             isMale: isMale
          })
       );
       isLeader[msg.sender] = true;
+      startingTimestamp = block.timestamp;
    }
 
    function becomeCitizen(uint256 favoriteNumber, bool isMale)
@@ -121,7 +123,7 @@ contract SimpleDemocracy is AutomationCompatible {
          addr: msg.sender,
          favoriteNumber: favoriteNumber,
          citizenId: citizenArray.length,
-         weeksAsCitizen: 0,
+         timeAsCitizen: 0,
          isMale: isMale
       });
       citizenArray.push(newCitizen);
@@ -138,7 +140,7 @@ contract SimpleDemocracy is AutomationCompatible {
       if (status != Status.Anarchy) {
          revert SimpleDemocracy__StatusMustBeAnarchy();
       }
-      if (citizenMapping[msg.sender].weeksAsCitizen < 3) {
+      if (citizenMapping[msg.sender].timeAsCitizen < 1 weeks) {
          revert SimpleDemocracy__NewCitizensCantBeLeader();
       }
       ///@dev it's leaderArray.length - 2 because startRevolution() pushes an empty leader object into array
@@ -174,13 +176,13 @@ contract SimpleDemocracy is AutomationCompatible {
          leaderArray.push(leader);
          emit LeaderOverthrown(
             leaderArray[leaderArray.length - 2].addr,
-            leaderArray[leaderArray.length - 2].weeksAsLeader
+            leaderArray[leaderArray.length - 2].timeAsLeader
          );
       }
       if (isRebel[msg.sender][leaderArray.length - 1] == true) {
          revert SimpleDemocracy__AlreadyJoinedUprising();
       }
-      if (rebelCounter + 1 <= (citizenArray.length / 2)) {         
+      if (rebelCounter + 1 <= (citizenArray.length / 2)) {
          rebelCounter++;
          isRebel[msg.sender][leaderArray.length - 1] = true;
       } else {
@@ -191,44 +193,51 @@ contract SimpleDemocracy is AutomationCompatible {
          leaderArray.push(leader);
          emit LeaderOverthrown(
             leaderArray[leaderArray.length - 2].addr,
-            leaderArray[leaderArray.length - 2].weeksAsLeader
+            leaderArray[leaderArray.length - 2].timeAsLeader
          );
       }
    }
 
    function checkUpkeep(
-      bytes calldata /*checkdata*/
+      bytes memory /*checkdata*/
    )
-      external
+      public
       view
       override
-      returns (bool upkeepNeeded, bytes memory performData)
+      returns (
+         bool upkeepNeeded,
+         bytes memory /*performData*/
+      )
    {
       if (
-         status != Status.Peaceful &&
-         leaderIdToCampaignArray[leaderArray.length - 1].length == 0
+         (status != Status.Peaceful &&
+            leaderIdToCampaignArray[leaderArray.length - 1].length == 0)
       ) {
          upkeepNeeded = false;
-         performData = "";
+         //performData = "";
       } else {
          upkeepNeeded = true;
-         performData = "";
+         //performData = "";
       }
    }
 
    function performUpkeep(
       bytes memory /*performData*/
    ) external override {
+      (bool upkeepNeeded, ) = checkUpkeep("0x");
+      if (upkeepNeeded == false) {
+         revert SimpleDemocracy__UpkeepNotNeeded();
+      }
       if (status == Status.Peaceful) {
-         leaderArray[leaderArray.length - 1].weeksAsLeader++;
+         leaderArray[leaderArray.length - 1].timeAsLeader = block.timestamp - startingTimestamp;
          for (uint256 i = 0; i < citizenArray.length; i++) {
-            citizenArray[i].weeksAsCitizen++;
+            citizenArray[i].timeAsCitizen++;
             address citizen = citizenArray[i].addr;
-            citizenMapping[citizen].weeksAsCitizen++;
+            citizenMapping[citizen].timeAsCitizen = block.timestamp - startingTimestamp;
          }
          emit CivilizationAtPeace(
             leaderArray[leaderArray.length - 1].addr,
-            leaderArray[leaderArray.length - 1].weeksAsLeader
+            leaderArray[leaderArray.length - 1].timeAsLeader
          );
       } else {
          // this For loop iterates through the current campaignArray to pick the new leader
@@ -272,7 +281,7 @@ contract SimpleDemocracy is AutomationCompatible {
                   addr: winningCitizen.addr,
                   favoriteNumber: winningCitizen.favoriteNumber,
                   leaderId: leaderArray.length - 1,
-                  weeksAsLeader: 0,
+                  timeAsLeader: 0,
                   isMale: winningCitizen.isMale
                });
                leaderArray[leaderArray.length - 1] = newLeader;

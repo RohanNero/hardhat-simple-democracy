@@ -15,10 +15,12 @@ const { developmentChains } = require("../../helper-hardhat-config")
            simpleDemocracy = await democracyFactory.deploy(7, true)
            // console.log(`simpleDemo addr: ${simpleDemocracy.address}`);
         })
-        describe("onlyCitizen", function() {
-         it("modifier only allows citizens to call functions", async function() {
-            await expect(simpleDemocracy.connect(user1).startRevolution()).to.be.revertedWith("SimpleDemocracy__MustBeACitizen()")
-         })
+        describe("onlyCitizen", function () {
+           it("modifier only allows citizens to call functions", async function () {
+              await expect(
+                 simpleDemocracy.connect(user1).startRevolution()
+              ).to.be.revertedWith("SimpleDemocracy__MustBeACitizen()")
+           })
         })
         describe("constructor", function () {
            it("inits deployer as first citizen", async function () {
@@ -92,6 +94,10 @@ const { developmentChains } = require("../../helper-hardhat-config")
               ).to.be.revertedWith("SimpleDemocracy__NewCitizensCantBeLeader()")
            })
            it("reverts if msg.sender was the previous leader", async function () {
+              await network.provider.send("evm_increaseTime", [
+                 60 * 60 * 24 * 7,
+              ])
+              await simpleDemocracy.performUpkeep("0x")
               await simpleDemocracy.startRevolution()
               await expect(
                  simpleDemocracy.campaignForLeader()
@@ -99,57 +105,75 @@ const { developmentChains } = require("../../helper-hardhat-config")
            })
         })
         describe("voteForLeader", function () {
-         beforeEach(async function() {
-            await simpleDemocracy.connect(user1).becomeCitizen(420, true)
-            await simpleDemocracy.connect(user2).becomeCitizen(777, true)
-            await simpleDemocracy.performUpkeep("0x")
-            await simpleDemocracy.performUpkeep("0x")
-            await simpleDemocracy.performUpkeep("0x")
-            await simpleDemocracy.startRevolution()
-            await simpleDemocracy.connect(user1).campaignForLeader()
-         })
-         it("reverts if user has already voted for a campaign", async function() {
-            await simpleDemocracy.voteForLeader(0)
-            await expect(simpleDemocracy.voteForLeader(0)).to.be.revertedWith("SimpleDemocracy__AlreadyVoted()")
-         })
-         it("increments the number of votes a campaign has correctly", async function() {
-            const [,,initialCount] = await simpleDemocracy.leaderIdToCampaignArray(1, 0)
-            await simpleDemocracy.voteForLeader(0)
-            const [,,finalCount] = await simpleDemocracy.leaderIdToCampaignArray(1,0)
-            assert.equal((initialCount.add(1)).toString(), finalCount.toString())
-         })
+           beforeEach(async function () {
+              await simpleDemocracy.connect(user1).becomeCitizen(420, true)
+              await simpleDemocracy.connect(user2).becomeCitizen(777, true)
+              await network.provider.send("evm_increaseTime", [604800])
+              await simpleDemocracy.performUpkeep("0x")
+              await simpleDemocracy.startRevolution()
+              await simpleDemocracy.connect(user1).campaignForLeader()
+           })
+           it("reverts if user has already voted for a campaign", async function () {
+              await simpleDemocracy.voteForLeader(0)
+              await expect(simpleDemocracy.voteForLeader(0)).to.be.revertedWith(
+                 "SimpleDemocracy__AlreadyVoted()"
+              )
+           })
+           it("increments the number of votes a campaign has correctly", async function () {
+              const [, , initialCount] =
+                 await simpleDemocracy.leaderIdToCampaignArray(1, 0)
+              await simpleDemocracy.voteForLeader(0)
+              const [, , finalCount] =
+                 await simpleDemocracy.leaderIdToCampaignArray(1, 0)
+              assert.equal(
+                 initialCount.add(1).toString(),
+                 finalCount.toString()
+              )
+           })
         })
         describe("startRevolution", function () {
-         beforeEach(async function() {
-            await simpleDemocracy.connect(user1).becomeCitizen(420, true)
-            await simpleDemocracy.connect(user2).becomeCitizen(77, false)
-            await simpleDemocracy.performUpkeep("0x")
-            await simpleDemocracy.performUpkeep("0x")
-            await simpleDemocracy.performUpkeep("0x")
-         })
-         it("reverts if status is already anarchy", async function() {
-            await simpleDemocracy.startRevolution()
-            await expect(simpleDemocracy.startRevolution()).to.be.revertedWith("SimpleDemocracy__StatusMustBePeaceful()")
-         })
-         it("emits leaderOverthrown if the leader calls", async function() {
-            await expect(simpleDemocracy.startRevolution()).to.emit(simpleDemocracy, "LeaderOverthrown").withArgs(deployer.address, 3)
-         })
-         it("reverts if user has already called the function", async function() {
-            await simpleDemocracy.connect(user1).startRevolution()
-            await expect(simpleDemocracy.connect(user1).startRevolution()).to.be.revertedWith("SimpleDemocracy__AlreadyJoinedUprising()")
-         })
-         it("emits leaderOverthrown if rebelCounter > citizenArray.length / 2", async function() {
-            await simpleDemocracy.connect(user1).startRevolution()
-            await expect(simpleDemocracy.connect(user2).startRevolution()).to.emit(simpleDemocracy, "LeaderOverthrown").withArgs(deployer.address, 3)
-         })
+           beforeEach(async function () {
+              await simpleDemocracy.connect(user1).becomeCitizen(420, true)
+              await simpleDemocracy.connect(user2).becomeCitizen(77, false)
+              await simpleDemocracy.performUpkeep("0x")
+              await simpleDemocracy.performUpkeep("0x")
+              await simpleDemocracy.performUpkeep("0x")
+           })
+           it("reverts if status is already anarchy", async function () {
+              await simpleDemocracy.startRevolution()
+              await expect(
+                 simpleDemocracy.startRevolution()
+              ).to.be.revertedWith("SimpleDemocracy__StatusMustBePeaceful()")
+           })
+           it("emits leaderOverthrown if the leader calls", async function () {
+              // leaderOverthrown event emits duration of leader's reign in seconds so increas 100 + 5 for functions to go through
+              await network.provider.send("evm_increaseTime", [100])
+              await simpleDemocracy.performUpkeep("0x")
+              await expect(simpleDemocracy.startRevolution())
+                 .to.emit(simpleDemocracy, "LeaderOverthrown")
+                 .withArgs(deployer.address, 105)
+           })
+           it("reverts if user has already called the function", async function () {
+              await simpleDemocracy.connect(user1).startRevolution()
+              await expect(
+                 simpleDemocracy.connect(user1).startRevolution()
+              ).to.be.revertedWith("SimpleDemocracy__AlreadyJoinedUprising()")
+           })
+           it("emits leaderOverthrown if rebelCounter > citizenArray.length / 2", async function () {
+              await network.provider.send("evm_increaseTime", [100])
+              await simpleDemocracy.performUpkeep("0x")
+              await simpleDemocracy.connect(user1).startRevolution()
+              await expect(simpleDemocracy.connect(user2).startRevolution())
+                 .to.emit(simpleDemocracy, "LeaderOverthrown")
+                 .withArgs(deployer.address, 105)
+           })
         })
         describe("checkUpkeep", function () {
            beforeEach(async function () {
               await simpleDemocracy.connect(user1).becomeCitizen(420, true)
               await simpleDemocracy.performUpkeep("0x")
-              await simpleDemocracy.performUpkeep("0x")
-              await simpleDemocracy.performUpkeep("0x")
            })
+           //it("returns false if it hasn't been a week since last checkUpkeep", async function() {})
            it("returns false if status is anarchy and no users campaignedForLeader", async function () {
               await simpleDemocracy.startRevolution()
               const [expectedVal] = await simpleDemocracy.checkUpkeep("0x")
@@ -157,6 +181,8 @@ const { developmentChains } = require("../../helper-hardhat-config")
               assert.equal(expectedVal, false)
            })
            it("returns true if status is anarchy and atleast one user has campaignedForLeader", async function () {
+             await network.provider.send("evm_increaseTime", [604800])
+             await simpleDemocracy.performUpkeep("0x")
               await simpleDemocracy.startRevolution()
               await simpleDemocracy.connect(user1).campaignForLeader()
               const [expectedVal] = await simpleDemocracy.checkUpkeep("0x")
@@ -174,23 +200,29 @@ const { developmentChains } = require("../../helper-hardhat-config")
               await simpleDemocracy.connect(user1).becomeCitizen(777, true)
               await simpleDemocracy.connect(user2).becomeCitizen(77, false)
            })
-           it("increments leader's weeksAsLeader if status is peaceful", async function () {
+           it("reverts if upkeep isnt needed", async function () {
+              await simpleDemocracy.startRevolution()
+              await expect(
+                 simpleDemocracy.performUpkeep("0x")
+              ).to.be.revertedWith("SimpleDemocracy__UpkeepNotNeeded()")
+           })
+           it("increments leader's timeAsLeader if status is peaceful", async function () {
               const aVar = await simpleDemocracy.leaderArray(0)
-              const initVal = await aVar.weeksAsLeader
+              const initVal = await aVar.timeAsLeader
               //console.log(`initVal: ${initVal.toString()}`)
               await simpleDemocracy.performUpkeep([])
               const bVar = await simpleDemocracy.leaderArray(0)
-              const finalVal = await bVar.weeksAsLeader
+              const finalVal = await bVar.timeAsLeader
               //console.log(`finalVal: ${finalVal.toString()}`)
-              assert.equal(initVal.add(1).toString(), finalVal.toString())
+              assert.equal(initVal.add(3).toString(), finalVal.toString())
            })
-           it("increments citizen's weeksAsCitizen if status is peaceful", async function () {
+           it("increments citizen's timeAsCitizen if status is peaceful", async function () {
               const aVar = await simpleDemocracy.citizenArray(1)
-              const initVal = aVar.weeksAsCitizen
+              const initVal = aVar.timeAsCitizen
               //console.log(`initVal: ${initVal.toString()}`)
               await simpleDemocracy.performUpkeep("0x")
               const bVar = await simpleDemocracy.citizenArray(1)
-              const finalVal = await bVar.weeksAsCitizen
+              const finalVal = await bVar.timeAsCitizen
               //console.log(`finalVal: ${finalVal.toString()}`)
               assert.equal(initVal.add(1).toString(), finalVal.toString())
            })
@@ -202,16 +234,18 @@ const { developmentChains } = require("../../helper-hardhat-config")
               const [, , , finalVal] = await simpleDemocracy.citizenMapping(
                  deployer.address
               )
-              assert.equal(initVal.add(1).toString(), finalVal.toString())
+              assert.equal(initVal.add(3).toString(), finalVal.toString())
            })
            it("emits CivilizationAtPeace event if status is peaceful", async function () {
               await expect(simpleDemocracy.performUpkeep("0x"))
                  .to.emit(simpleDemocracy, "CivilizationAtPeace")
-                 .withArgs(deployer.address, 1)
+                 .withArgs(deployer.address, 3)
            })
            it("makes campaign with the highest votes the new leader", async function () {
               await simpleDemocracy.performUpkeep("0x")
-              await simpleDemocracy.performUpkeep("0x")
+              await network.provider.send("evm_increaseTime", [
+                 60 * 60 * 24 * 7,
+              ])
               await simpleDemocracy.performUpkeep("0x")
               await simpleDemocracy.startRevolution()
               await simpleDemocracy.connect(user1).campaignForLeader()
@@ -230,8 +264,7 @@ const { developmentChains } = require("../../helper-hardhat-config")
               ])
            })
            it("emits the NewLeaderElected event correctly", async function () {
-              await simpleDemocracy.performUpkeep("0x")
-              await simpleDemocracy.performUpkeep("0x")
+              await network.provider.send("evm_increaseTime", [604800])
               await simpleDemocracy.performUpkeep("0x")
               await simpleDemocracy.startRevolution()
               await simpleDemocracy.connect(user2).campaignForLeader()
@@ -242,8 +275,7 @@ const { developmentChains } = require("../../helper-hardhat-config")
                  .withArgs(user2.address, 2)
            })
            it("emits VRFChoosingNewLeader event if multiple campaigns tie", async function () {
-              await simpleDemocracy.performUpkeep("0x")
-              await simpleDemocracy.performUpkeep("0x")
+              await network.provider.send("evm_increaseTime", [604800])
               await simpleDemocracy.performUpkeep("0x")
               await simpleDemocracy.startRevolution()
               await simpleDemocracy.connect(user1).campaignForLeader()
@@ -256,21 +288,20 @@ const { developmentChains } = require("../../helper-hardhat-config")
            })
         })
         describe("getStatus", function () {
-         it("returns peaceful correctly", async function() {
-            const value = await simpleDemocracy.getStatus()
-            //console.log(value.toString())
-         })
-         it("returns anarchy correctly", async function() {
-            const value = await simpleDemocracy.getStatus()
-            //console.log(value.toString())
-         })
+           it("returns peaceful correctly", async function () {
+              const value = await simpleDemocracy.getStatus()
+              //console.log(value.toString())
+           })
+           it("returns anarchy correctly", async function () {
+              const value = await simpleDemocracy.getStatus()
+              //console.log(value.toString())
+           })
         })
-        describe("getLeaderArrayLength", function() {
-         it("should return length of the leaderArray correctly", async function() {
-            const initialCount = await simpleDemocracy.getLeaderArrayLength()
-            await simpleDemocracy.startRevolution()
-            const finalCount = await simpleDemocracy.getLeaderArrayLength() 
-         })
-                
+        describe("getLeaderArrayLength", function () {
+           it("should return length of the leaderArray correctly", async function () {
+              const initialCount = await simpleDemocracy.getLeaderArrayLength()
+              await simpleDemocracy.startRevolution()
+              const finalCount = await simpleDemocracy.getLeaderArrayLength()
+           })
         })
      })
