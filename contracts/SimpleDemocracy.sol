@@ -4,6 +4,8 @@ pragma solidity ^0.8.7;
 
 import "hardhat/console.sol";
 import "@chainlink/contracts/src/v0.8/AutomationCompatible.sol";
+import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 
 error SimpleDemocracy__MustBeACitizen();
 error SimpleDemocracy__AlreadyACitizen(uint256 citizenId);
@@ -15,7 +17,7 @@ error SimpleDemocracy__NewCitizensCantBeLeader();
 error SimpleDemocracy__AlreadyVoted();
 error SimpleDemocracy__UpkeepNotNeeded();
 
-contract SimpleDemocracy is AutomationCompatible {
+contract SimpleDemocracy is AutomationCompatible, VRFConsumerBaseV2 {
    enum Status {
       Peaceful, // 0
       Anarchy // 1
@@ -44,6 +46,15 @@ contract SimpleDemocracy is AutomationCompatible {
       uint256 votes;
    }
 
+   // VRF variables
+   VRFCoordinatorV2Interface private immutable i_vrfCoordinator;
+   bytes32 private immutable i_gasLane;
+   uint64 private immutable i_subId;
+   uint32 private immutable i_callbackGasLimit;
+   uint16 private constant REQUEST_CONFIRMATIONS = 3;
+   uint32 private constant NUM_WORDS = 1;
+   uint8 public numOfTiedWinners;
+
    uint256 startingTimestamp;
    uint256 timeInterval = 60 * 60 * 24 * 7;
    uint256 rebelCounter;
@@ -59,6 +70,7 @@ contract SimpleDemocracy is AutomationCompatible {
    mapping(address => mapping(uint256 => bool)) public hasVoted;
    mapping(uint256 => Campaign[]) public leaderIdToCampaignArray;
    /// @dev this uint[] is used with VRF to pick a winner if there is a tie
+   /// leaderId => array of winnerCampaignIds
    mapping(uint256 => uint256[]) public winnerCampaignIds;
 
    event CitizenJoined(
@@ -66,16 +78,14 @@ contract SimpleDemocracy is AutomationCompatible {
       uint256 indexed favoriteNubmer,
       bool indexed isMale
    );
-   event LeaderOverthrown(
-      address indexed leader,
-      uint256 indexed timeAsLeader
-   );
+   event LeaderOverthrown(address indexed leader, uint256 indexed timeAsLeader);
    event CivilizationAtPeace(
       address indexed currentLeader,
       uint256 indexed timeAsLeader
    );
    event NewLeaderElected(address indexed newLeader, uint256 numberOfVotes);
    event VRFChoosingNewLeader(uint256 numberOfWinningCampaigns);
+   event LeaderElectedWithVRF(address indexed newLeader);
 
    modifier onlyCitizen() {
       if (isCitizen[msg.sender] == false) {
@@ -85,7 +95,14 @@ contract SimpleDemocracy is AutomationCompatible {
       _;
    }
 
-   constructor(uint256 favoriteNumber, bool isMale) {
+   constructor(
+      uint256 favoriteNumber,
+      bool isMale,
+      address vrfCoordinatorV2,
+      bytes32 gasLane,
+      uint64 subId,
+      uint32 callbackGasLimit
+   ) VRFConsumerBaseV2(vrfCoordinatorV2) {
       citizenArray.push(
          Citizen({
             addr: msg.sender,
@@ -107,6 +124,11 @@ contract SimpleDemocracy is AutomationCompatible {
       );
       isLeader[msg.sender] = true;
       startingTimestamp = block.timestamp;
+      // VRF variables
+      i_vrfCoordinator = VRFCoordinatorV2Interface(vrfCoordinatorV2);
+      i_gasLane = gasLane;
+      i_subId = subId;
+      i_callbackGasLimit = callbackGasLimit;
    }
 
    function becomeCitizen(uint256 favoriteNumber, bool isMale)
@@ -229,11 +251,15 @@ contract SimpleDemocracy is AutomationCompatible {
          revert SimpleDemocracy__UpkeepNotNeeded();
       }
       if (status == Status.Peaceful) {
-         leaderArray[leaderArray.length - 1].timeAsLeader = block.timestamp - startingTimestamp;
+         leaderArray[leaderArray.length - 1].timeAsLeader =
+            block.timestamp -
+            startingTimestamp;
          for (uint256 i = 0; i < citizenArray.length; i++) {
             citizenArray[i].timeAsCitizen++;
             address citizen = citizenArray[i].addr;
-            citizenMapping[citizen].timeAsCitizen = block.timestamp - startingTimestamp;
+            citizenMapping[citizen].timeAsCitizen =
+               block.timestamp -
+               startingTimestamp;
          }
          emit CivilizationAtPeace(
             leaderArray[leaderArray.length - 1].addr,
@@ -256,8 +282,9 @@ contract SimpleDemocracy is AutomationCompatible {
                   .votes;
             }
          }
+         // console.log("highestVote:", highestVote);
          // this For loop iterates the campaignArray to see if multiple campaigns have the highestVote
-         uint256 tieChecker = 0;
+         uint8 tieChecker = 0;
          for (
             uint256 i = 0;
             i < leaderIdToCampaignArray[leaderArray.length - 1].length;
@@ -269,28 +296,61 @@ contract SimpleDemocracy is AutomationCompatible {
             ) {
                tieChecker++;
                winnerCampaignIds[leaderArray.length - 1].push(i);
-            }
-            if (tieChecker == 1) {
-               Campaign memory winningCampaign = leaderIdToCampaignArray[
-                  leaderArray.length - 1
-               ][winnerCampaignIds[leaderArray.length - 1][0]];
-               Citizen memory winningCitizen = citizenMapping[
-                  winningCampaign.addr
-               ];
-               Leader memory newLeader = Leader({
-                  addr: winningCitizen.addr,
-                  favoriteNumber: winningCitizen.favoriteNumber,
-                  leaderId: leaderArray.length - 1,
-                  timeAsLeader: 0,
-                  isMale: winningCitizen.isMale
-               });
-               leaderArray[leaderArray.length - 1] = newLeader;
-               emit NewLeaderElected(winningCitizen.addr, highestVote);
-            } else {
-               emit VRFChoosingNewLeader(tieChecker);
+               //console.log(i);
             }
          }
+         if (tieChecker == 1) {
+            Campaign memory winningCampaign = leaderIdToCampaignArray[
+               leaderArray.length - 1
+            ][winnerCampaignIds[leaderArray.length - 1][0]];
+            Citizen memory winningCitizen = citizenMapping[
+               winningCampaign.addr
+            ];
+            Leader memory newLeader = Leader({
+               addr: winningCitizen.addr,
+               favoriteNumber: winningCitizen.favoriteNumber,
+               leaderId: leaderArray.length - 1,
+               timeAsLeader: 0,
+               isMale: winningCitizen.isMale
+            });
+            leaderArray[leaderArray.length - 1] = newLeader;
+            emit NewLeaderElected(winningCitizen.addr, highestVote);
+         } else {
+            uint256 requestId = i_vrfCoordinator.requestRandomWords(
+               i_gasLane,
+               i_subId,
+               REQUEST_CONFIRMATIONS,
+               i_callbackGasLimit,
+               NUM_WORDS
+            );
+            numOfTiedWinners = tieChecker;
+            emit VRFChoosingNewLeader(tieChecker);
+         }
       }
+   }
+
+   function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords)
+      internal
+      override
+   {
+      uint256 winnerIndex = randomWords[0] % numOfTiedWinners;
+      numOfTiedWinners = 0;
+      uint256 winningCampaignIndex = winnerCampaignIds[leaderArray.length - 1][
+         winnerIndex
+      ];
+      Campaign memory winningCampaign = leaderIdToCampaignArray[
+         leaderArray.length - 1
+      ][winningCampaignIndex];
+      Citizen memory winningCitizen = citizenMapping[winningCampaign.addr];
+      Leader memory newLeader = Leader(
+         winningCitizen.addr,
+         winningCitizen.favoriteNumber,
+         leaderArray.length - 1,
+         0,
+         winningCitizen.isMale
+      );
+      leaderArray[leaderArray.length - 1] = newLeader;
+      emit LeaderElectedWithVRF(newLeader.addr);
    }
 
    function getStatus() public view returns (Status) {
