@@ -16,6 +16,14 @@ const networkConfig = {
       subId: 7,
       callbackGasLimit: "500000",
    },
+   43113: {
+      name: "fuji",
+      vrfCoordinator: "0x2eD832Ba664535e5886b75D64C46EB9a228C2610",
+      gasLane:
+         "0x354d2f95da55398f44b7cff77da56283d9c6c829a4bdf1bbcaf2ad6a4d081f61",
+      subId: 550,
+      callbackGasLimit: "500000",
+   },
 }
 
 module.exports = {

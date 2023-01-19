@@ -46,10 +46,7 @@ module.exports = async function ({ deployments, getNamedAccounts }) {
    })
 
    // Verifying on etherscan
-   if (
-      !developmentChains.includes(network.name) &&
-      process.env.ETHERSCAN_API_KEY
-   ) {
+   if (chainId < 10 && process.env.ETHERSCAN_API_KEY) {
       await verify(simpleDemocracy.address, arguments)
    }
 }

@@ -9,6 +9,8 @@ require("hardhat-gas-reporter")
 
 /** @type import('hardhat/config').HardhatUserConfig */
 
+FUJI_RPC_URL = process.env.FUJI_RPC_URL
+
 GOERLI_RPC_URL = process.env.GOERLI_RPC_URL
 PRIVATE_KEY = process.env.PRIVATE_KEY
 ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY
@@ -25,6 +27,12 @@ module.exports = {
          accounts: [PRIVATE_KEY],
          chainId: 5,
          blockConfirmations: 5,
+      },
+      fuji: {
+         url: FUJI_RPC_URL,
+         accounts: [PRIVATE_KEY],
+         chainId: 43113,
+         blockConfirmations: 3,
       },
    },
    namedAccounts: {
